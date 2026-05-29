@@ -31,7 +31,7 @@ jobs:
     container:
       image: debian:trixie
     permissions:
-      contents: write
+      contents: read
 
     steps:
       - name: Bootstrap container tooling
@@ -1489,25 +1489,16 @@ jobs:
           echo "Created firmware bundle: $bundle_path"
           echo "path=$bundle_path" >> "$GITHUB_OUTPUT"
 
-      - name: Publish deb-only GitHub release
-        uses: softprops/action-gh-release@v2
+      - name: Upload firmware bundle artifact
+        uses: actions/upload-artifact@v7
         if: success()
         with:
-          tag_name: ${{ steps.release_tag.outputs.value }}
-          name: Release ${{ steps.release_tag.outputs.value }}
-          body: |
-            Automated release ${{ steps.release_tag.outputs.value }} containing the Raspberry Pi build and plugin Debian packages.
-          files: |
-            artifacts/${{ env.DEB_PACKAGE }}_${{ steps.version.outputs.package_version }}_${{ env.DEB_ARCH }}_${{ steps.release_tag.outputs.date }}.deb
-            artifacts/pinsdaemon_*.deb
-            artifacts/pins-wandereretasdk_*.deb
-            artifacts/plugins/*.deb
-            ${{ steps.firmware_bundle.outputs.path }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: firmware-bundle
+          path: ${{ steps.firmware_bundle.outputs.path }}
+          retention-days: 30
 
       - name: Upload plugin deb artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: plugin-debs
           path: ${{ env.PLUGIN_ARTIFACT_DIR }}

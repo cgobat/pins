@@ -34,7 +34,7 @@ jobs:
     container:
       image: debian:trixie
     permissions:
-      contents: write
+      contents: read
 
     steps:
       - name: Bootstrap container tooling
@@ -735,19 +735,6 @@ jobs:
             cat artifacts/release-files.txt
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
-
-      - name: Publish package GitHub release
-        uses: softprops/action-gh-release@v2
-        if: success()
-        with:
-          tag_name: ${{ steps.meta.outputs.release_tag }}
-          name: Release ${{ steps.meta.outputs.release_tag }}
-          body: |
-            Automated release for package ${{ inputs.package_key }}.
-            Build number starts at 300 by using offset run numbering.
-          files: ${{ steps.build.outputs.release_files }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload package build artifact
         uses: actions/upload-artifact@v4
