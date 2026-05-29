@@ -255,7 +255,7 @@ jobs:
         Compress-Archive -Path "$outputPath\*.pdb" -DestinationPath "NINAPdb_x64_$version.zip"
 
     - name: Upload zipped installer
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: zipped-installer
         path: "NINASetupBundle_${{ needs.versioning.outputs.version }}.zip"
@@ -263,7 +263,7 @@ jobs:
         if-no-files-found: error
 
     - name: Upload zipped symbols
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: zipped-symbols
         path: "NINAPdb_x64_${{ needs.versioning.outputs.version }}.zip"
@@ -271,7 +271,7 @@ jobs:
         if-no-files-found: error
 
     - name: Upload release notes
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: release-notes
         path: |
@@ -279,7 +279,7 @@ jobs:
         retention-days: 1
 
     - name: Upload NuGet packages
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: nugets
         path: |
@@ -353,7 +353,7 @@ jobs:
         }
     
     - name: Upload versioninfo artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: version-info
         path: |
