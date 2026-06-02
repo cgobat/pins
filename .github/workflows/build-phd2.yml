@@ -1,0 +1,147 @@
+name: Build PHD2 packages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build PHD2 (${{ matrix.deb_arch }})
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: debian:trixie
+      options: --user root
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # - deb_arch: amd64
+          #   runner: ubuntu-24.04
+          #   parallel_jobs: 3
+          - deb_arch: arm64
+            runner: ubuntu-24.04-arm
+            parallel_jobs: 3
+
+    steps:
+      - name: Bootstrap container tooling
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git curl gnupg
+
+      - name: Checkout PHD2 source repository
+        uses: actions/checkout@v4
+        with:
+          repository: acocalypso/phd2
+          submodules: recursive
+          lfs: false
+
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+
+          # Enable deb-src so mk-build-deps can resolve source-package build deps.
+          if [ -f /etc/apt/sources.list.d/debian.sources ]; then
+            sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources
+          elif [ -f /etc/apt/sources.list ]; then
+            sed -i '/^deb /p; s/^deb /deb-src /' /etc/apt/sources.list
+          fi
+
+          mkdir -p /etc/apt/keyrings
+          curl -fsSL https://astroberry.io/debian/astroberry.asc | gpg --dearmor -o /etc/apt/keyrings/astroberry.gpg
+          curl -fsSL https://astroberry.io/debian/astroberry.sources -o /etc/apt/sources.list.d/astroberry.sources
+          curl -fsSL https://astroberry.io/debian/astroberry-pin -o /etc/apt/preferences.d/astroberry-pin
+
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git \
+            build-essential debhelper devscripts equivs fakeroot dpkg-dev cdbs \
+            cmake ninja-build pkg-config \
+            autoconf automake libtool \
+            gettext \
+            wx-common wx3.2-i18n libwxgtk3.2-dev \
+            zlib1g-dev libx11-dev libeigen3-dev libgtest-dev libgmock-dev \
+            libcurl4-gnutls-dev \
+            libjpeg-dev libpng-dev libtiff-dev \
+            libavcodec-dev libavformat-dev libswscale-dev libavutil-dev \
+            libgtk-3-dev libv4l-dev libdc1394-dev \
+            libcfitsio-dev libnova-dev libusb-1.0-0-dev \
+            libgsl-dev libfftw3-dev libczmq-dev libftdi1-dev \
+            libavdevice-dev libgps-dev libraw-dev libgphoto2-dev \
+            libboost-all-dev libopencv-dev libzmq3-dev libudev-dev \
+            liblimesuite-dev libhidapi-dev nlohmann-json3-dev \
+            libev-dev \
+            gnupg \
+            indi-bin libindi-dev libindi-data indi-full
+
+          cd "${GITHUB_WORKSPACE}"
+          mk-build-deps --install --remove \
+            --tool "apt-get -o Debug::pkgProblemResolver=yes --no-install-recommends -y" \
+            debian/control
+
+      - name: Build OpenCV 4.11.0
+        run: |
+          set -euo pipefail
+          OPENCV_VERSION=4.11.0
+          curl -fL --retry 5 --retry-delay 5 "https://codeload.github.com/opencv/opencv/tar.gz/refs/tags/${OPENCV_VERSION}" -o opencv-${OPENCV_VERSION}.tar.gz
+          tar -xzf opencv-${OPENCV_VERSION}.tar.gz
+          cmake -S opencv-${OPENCV_VERSION} -B opencv-${OPENCV_VERSION}/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DBUILD_LIST=core,imgproc,highgui,videoio,imgcodecs \
+            -DBUILD_TESTS=OFF -DBUILD_PERF_TESTS=OFF -DBUILD_EXAMPLES=OFF \
+            -DWITH_FFMPEG=ON -DWITH_GSTREAMER=OFF -DWITH_OPENCL=OFF \
+            -DWITH_IPP=OFF -DWITH_TBB=OFF
+          cmake --build opencv-${OPENCV_VERSION}/build --parallel "${{ matrix.parallel_jobs }}"
+          cmake --install opencv-${OPENCV_VERSION}/build
+          ldconfig
+
+      - name: Stamp run number into Debian version
+        run: |
+          set -euo pipefail
+          orig_version=$(sed -n '1s/^.*(\([^)]*\)).*/\1/p' debian/changelog)
+          base_version=$(printf '%s' "$orig_version" | sed -E 's/-[A-Za-z0-9.+~]+$//')
+          new_version="${base_version}-$((30 + GITHUB_RUN_NUMBER))"
+          export DEBEMAIL="actions@github.com"
+          export DEBFULLNAME="GitHub Actions"
+          dch --noauto-nmu -v "$new_version" "CI build ${GITHUB_RUN_NUMBER} for ${{ matrix.deb_arch }}"
+
+      - name: Build Debian package
+        run: |
+          set -euo pipefail
+          export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+          export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"
+          export CMAKE_PREFIX_PATH="/usr/local:${CMAKE_PREFIX_PATH:-}"
+          export OpenCV_DIR="/usr/local/lib/cmake/opencv4"
+          export DEB_BUILD_OPTIONS="nocheck parallel=$(nproc)"
+          dpkg-buildpackage -b -us -uc -a "${{ matrix.deb_arch }}"
+
+      - name: Collect artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          find .. -maxdepth 1 \( -name "*.deb" -o -name "*.buildinfo" -o -name "*.changes" \) -exec cp {} artifacts/ \;
+          (cd artifacts && sha256sum * > SHA256SUMS)
+
+      - name: List artifacts
+        run: ls -lh artifacts
+
+      - name: Verify service file path inside .deb
+        run: |
+          set -euo pipefail
+          deb_file=$(find artifacts -maxdepth 1 -name "phd2_*.deb" ! -name "*dbgsym*" | head -n 1)
+          [ -n "${deb_file}" ]
+          echo "Inspecting package: ${deb_file}"
+          dpkg-deb -c "${deb_file}" | tee /tmp/deb-contents.txt
+          grep -q "./etc/systemd/system/phd2.service" /tmp/deb-contents.txt
+
+      - name: Upload PHD2 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: phd2-${{ matrix.deb_arch }}-debs
+          path: artifacts/*
+          retention-days: 30
